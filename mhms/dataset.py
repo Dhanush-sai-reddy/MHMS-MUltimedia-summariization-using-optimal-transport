@@ -2,7 +2,6 @@ import os
 import torch
 import numpy as np
 from torch.utils.data import Dataset
-from transformers import BertTokenizer
 
 class CNNMultimodalDataset(Dataset):
     def __init__(self, data_dir="cnn_data", max_sentences=20, max_words=64, visual_dim=1024, max_shots=20):
@@ -19,8 +18,6 @@ class CNNMultimodalDataset(Dataset):
         self.max_words = max_words
         self.visual_dim = visual_dim
         self.max_shots = max_shots
-        
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         
         # Read the global labels
         label_file = os.path.join(data_dir, 'label.txt')
@@ -72,16 +69,13 @@ class CNNMultimodalDataset(Dataset):
         input_ids = torch.zeros((self.max_sentences, self.max_words), dtype=torch.long)
         attention_mask = torch.zeros((self.max_sentences, self.max_words), dtype=torch.long)
         
+        # Zero-dependency tokenizer since we already have the summaries!
         for i, sent in enumerate(sentences):
-            encoded = self.tokenizer(
-                sent, 
-                max_length=self.max_words, 
-                truncation=True, 
-                padding='max_length', 
-                return_tensors='pt'
-            )
-            input_ids[i] = encoded['input_ids'].squeeze(0)
-            attention_mask[i] = encoded['attention_mask'].squeeze(0)
+            words = sent.split()[:self.max_words]
+            for j, w in enumerate(words):
+                # Basic token index simulation to totally avoid heavy BERT tokenizers 
+                input_ids[i, j] = (abs(hash(w)) % 30000) + 1
+                attention_mask[i, j] = 1
             
         # 2. Read Labels (Text Extractive Labels)
         # Using sample_id cautiously. If label length is 444 and IDs go up to 262, 

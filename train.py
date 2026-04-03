@@ -23,8 +23,7 @@ def train():
     # Using small versions for demonstration purposes. 
     # Adjust omega_b based on expected sequence lengths in VTS.
     model = MHMS(
-        bert_model_name='bert-base-uncased',
-        text_hidden_size=768,
+        text_hidden_size=256,
         visual_feature_dim=1024,
         video_hidden_dim=256,
         video_omega_b=3 
