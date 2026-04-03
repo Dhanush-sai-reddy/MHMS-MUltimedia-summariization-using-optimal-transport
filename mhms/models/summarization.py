@@ -1,45 +1,98 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-class ExtractiveSummarizer(nn.Module):
+class TextExtractiveSummarizer(nn.Module):
     """
-    Extractive summarization head.
-    Can be used for both textual sequence encoding and visual sequence encoding.
-    It takes a sequence of features (e.g., sentence feature from BERT, or video shot feature)
-    and predicts a binary probability of inclusion in the final summary.
+    Lightweight extractive summarization head for text.
+    Relies on predicting sequence significance directly from HierarchicalBERT encodings.
     """
     def __init__(self, input_dim, hidden_dim=256, dropout=0.1):
-        super(ExtractiveSummarizer, self).__init__()
-        
-        # Bi-LSTM to capture context among sentences or among video shots
-        self.bilstm = nn.LSTM(
-            input_size=input_dim,
-            hidden_size=hidden_dim,
-            batch_first=True,
-            bidirectional=True
-        )
-        
+        super(TextExtractiveSummarizer, self).__init__()
+        self.bilstm = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, 
+                              batch_first=True, bidirectional=True)
         self.dropout = nn.Dropout(dropout)
-        # Output layer maps the 2*hidden_dim (from Bi-LSTM) to a single sequence score
         self.fc = nn.Linear(hidden_dim * 2, 1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, sequence_features):
-        """
-        Args:
-           sequence_features: (Batch Size, Sequence Length, Feature Dim)
-        Returns:
-           summary_probs: (Batch Size, Sequence Length) probability of each item.
-        """
-        # Pass features through Bi-LSTM
-        # lstm_out shape: (B, Sq_Len, 2 * Hidden)
         lstm_out, _ = self.bilstm(sequence_features)
-        
         lstm_out = self.dropout(lstm_out)
-        
-        # Predict extractive score for each item in the sequence
-        # logits shape: (B, Sq_Len, 1) -> squeezed to (B, Sq_Len)
         logits = self.fc(lstm_out).squeeze(-1)
-        summary_probs = self.sigmoid(logits)
+        return self.sigmoid(logits)
+
+
+class VisualEncoderDecoderSummarizer(nn.Module):
+    """
+    Visual Summarization module based on Section 3.2 of the MHMS paper.
+    It uses an Encoder (Bi-LSTM) and Decoder (LSTM) architecture with an 
+    attention mechanism to capture temporal ordering and dependency 
+    to generate importance scores for each frame/shot.
+    """
+    def __init__(self, input_dim, hidden_dim=256):
+        super(VisualEncoderDecoderSummarizer, self).__init__()
+        self.hidden_dim = hidden_dim
         
-        return summary_probs
+        # Encoder: Bi-LSTM
+        self.encoder = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, 
+                               batch_first=True, bidirectional=True)
+        
+        # Decoder: LSTM 
+        # Decoder input is the context vector (dim = hidden_dim * 2 from encoder) plus previous score
+        self.decoder = nn.LSTMCell(input_size=(hidden_dim * 2), hidden_size=hidden_dim)
+        
+        # Attention mechanism parameters (Eq 7)
+        self.W_a = nn.Linear(hidden_dim, hidden_dim * 2, bias=False)
+        
+        # Final projection to score
+        self.fc_score = nn.Linear(hidden_dim, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, video_features):
+        """
+        video_features: (B, M, input_dim) where M is sequence length (num shots)
+        Returns:
+            scores: (B, M)
+        """
+        B, M, _ = video_features.shape
+        device = video_features.device
+        
+        # 1. Encode
+        # E shape: (B, M, 2 * hidden_dim)
+        E, (h_n, c_n) = self.encoder(video_features)
+        
+        # 2. Decode auto-regressively to generate importance sequence
+        scores = torch.zeros(B, M, device=device)
+        
+        # Initialize decoder state with the final forward/backward states of encoder
+        # h_n is (2, B, hidden_dim). We can just take the backward or forward, or sum them.
+        hx = h_n[0] + h_n[1] # (B, hidden_dim)
+        cx = c_n[0] + c_n[1] # (B, hidden_dim)
+        
+        # In this extractive formulation, we need M output scores.
+        for t in range(M):
+            # Attention Mechanism (Eq 6, 7, 8)
+            # score function: e_t^i = e_i^T W_a s_{t-1}
+            # hx is conceptually our s_{t-1} state of the decoder: (B, hidden_dim)
+            
+            # W_a(hx) -> (B, 2 * hidden_dim)
+            query = self.W_a(hx).unsqueeze(2) # (B, 2*hidden_dim, 1)
+            
+            # E is (B, M, 2*hidden_dim)
+            # bmm(E, query) -> (B, M, 1)
+            attn_energies = torch.bmm(E, query).squeeze(2) # (B, M)
+            alpha_t = F.softmax(attn_energies, dim=1)      # (B, M)
+            
+            # Context vector E_t: (B, 2*hidden_dim)
+            # bmm(alpha_t.unsqueeze(1), E) -> (B, 1, M) x (B, M, 2*hidden_dim) -> (B, 1, 2*hidden_dim)
+            context_t = torch.bmm(alpha_t.unsqueeze(1), E).squeeze(1)
+            
+            # Decoder step: inputs context_t
+            # (Note: paper also feeds d_{t-1}, but context is primary driver)
+            hx, cx = self.decoder(context_t, (hx, cx))
+            
+            # Project to single probability score
+            score_t = self.sigmoid(self.fc_score(hx).squeeze(-1)) # (B)
+            scores[:, t] = score_t
+            
+        return scores

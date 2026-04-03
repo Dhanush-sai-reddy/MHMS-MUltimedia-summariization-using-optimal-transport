@@ -5,18 +5,20 @@ from torch.utils.data import Dataset
 from transformers import BertTokenizer
 
 class CNNMultimodalDataset(Dataset):
-    def __init__(self, data_dir="cnn_data", max_sentences=20, max_words=64, visual_dim=1024):
+    def __init__(self, data_dir="cnn_data", max_sentences=20, max_words=64, visual_dim=1024, max_shots=20):
         """
         Args:
             data_dir: Path to cnn_data directory.
             max_sentences: Maximum sentences per article.
             max_words: Maximum words per sentence.
             visual_dim: The mock video feature dimension mapping to VTS.
+            max_shots: Maximum shots per video for padding.
         """
         self.data_dir = data_dir
         self.max_sentences = max_sentences
         self.max_words = max_words
         self.visual_dim = visual_dim
+        self.max_shots = max_shots
         
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         
@@ -94,14 +96,18 @@ class CNNMultimodalDataset(Dataset):
             
         # 3. Handle Video Features (Mocking extraction from .ts files)
         video_dir = os.path.join(sample_path, 'video')
-        num_shots = 10 # default fallback
+        actual_shots = 10 # default fallback
         if os.path.exists(video_dir):
             ts_files = [f for f in os.listdir(video_dir) if f.endswith('.ts')]
-            num_shots = max(10, len(ts_files)) # Ensure at least enough shots for VTS window
+            actual_shots = max(1, len(ts_files)) 
             
-        # We simulate CNN extracted temporal features for these shots
-        # In a real pipeline, torchvision or ffmpeg would decode the .ts and pass through ResNet
-        video_features = torch.randn((num_shots, self.visual_dim), dtype=torch.float)
+        # We simulate CNN extracted temporal features for these shots padded to max_shots
+        video_features = torch.zeros((self.max_shots, self.visual_dim), dtype=torch.float)
+        
+        # Populate up to max_shots
+        populated_shots = min(actual_shots, self.max_shots)
+        mock_real_features = torch.randn((populated_shots, self.visual_dim), dtype=torch.float)
+        video_features[:populated_shots, :] = mock_real_features
 
         return {
             "input_ids": input_ids,
@@ -109,7 +115,7 @@ class CNNMultimodalDataset(Dataset):
             "video_features": video_features,
             "summ_labels": summ_labels,
             "num_sentences": min(actual_sents, self.max_sentences),
-            "num_shots": num_shots
+            "num_shots": populated_shots
         }
 
 if __name__ == "__main__":

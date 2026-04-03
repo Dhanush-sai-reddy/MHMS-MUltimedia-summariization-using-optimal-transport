@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.text_segmentation import HierarchicalBERT
-from models.video_temporal_segmentation import VTS
-from models.summarization import ExtractiveSummarizer
+from mhms.models.text_segmentation import HierarchicalBERT
+from mhms.models.video_temporal_segmentation import VTS
+from mhms.models.summarization import TextExtractiveSummarizer, VisualEncoderDecoderSummarizer
 
 class MHMS(nn.Module):
     """
@@ -44,10 +44,10 @@ class MHMS(nn.Module):
         self.video_projector = nn.Linear(visual_feature_dim, self.alignment_dim)
         
         # 3. Summarization Modules
-        self.text_summarizer = ExtractiveSummarizer(input_dim=text_hidden_size, hidden_dim=text_hidden_size//2)
+        self.text_summarizer = TextExtractiveSummarizer(input_dim=text_hidden_size, hidden_dim=text_hidden_size//2)
         
-        # For video summarization, we take the raw visual features mapped to hidden
-        self.video_summarizer = ExtractiveSummarizer(input_dim=visual_feature_dim, hidden_dim=video_hidden_dim)
+        # For video summarization, we extract visual seq attention scores directly using Encoder-Decoder
+        self.video_summarizer = VisualEncoderDecoderSummarizer(input_dim=visual_feature_dim, hidden_dim=video_hidden_dim)
 
     def compute_sinkhorn_loss_torch(self, E, V, reg=0.05, num_iters=10):
         """
