@@ -38,8 +38,8 @@ class VisualEncoderDecoderSummarizer(nn.Module):
                                batch_first=True, bidirectional=True)
         
         # Decoder: LSTM 
-        # Decoder input is the context vector (dim = hidden_dim * 2 from encoder) plus previous score
-        self.decoder = nn.LSTMCell(input_size=(hidden_dim * 2), hidden_size=hidden_dim)
+        # Decoder input is the context vector E_t (dim = hidden_dim * 2) plus previous score d_{t-1} (dim = 1)
+        self.decoder = nn.LSTMCell(input_size=(hidden_dim * 2) + 1, hidden_size=hidden_dim)
         
         # Attention mechanism parameters (Eq 7)
         self.W_a = nn.Linear(hidden_dim, hidden_dim * 2, bias=False)
@@ -87,11 +87,17 @@ class VisualEncoderDecoderSummarizer(nn.Module):
             # bmm(alpha_t.unsqueeze(1), E) -> (B, 1, M) x (B, M, 2*hidden_dim) -> (B, 1, 2*hidden_dim)
             context_t = torch.bmm(alpha_t.unsqueeze(1), E).squeeze(1)
             
-            # Decoder step: inputs context_t
-            # (Note: paper also feeds d_{t-1}, but context is primary driver)
-            hx, cx = self.decoder(context_t, (hx, cx))
+            # Previous score d_{t-1}
+            if t == 0:
+                d_prev = torch.zeros(B, 1, device=device)
+            else:
+                d_prev = scores[:, t-1].unsqueeze(1)
+                
+            # Decoder step: inputs [context_t, d_{t-1}]
+            decoder_input = torch.cat([context_t, d_prev], dim=1) # (B, 2*hidden_dim + 1)
+            hx, cx = self.decoder(decoder_input, (hx, cx))
             
-            # Project to single probability score
+            # Project to single probability score d_t
             score_t = self.sigmoid(self.fc_score(hx).squeeze(-1)) # (B)
             scores[:, t] = score_t
             

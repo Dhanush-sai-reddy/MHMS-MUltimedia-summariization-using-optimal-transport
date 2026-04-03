@@ -96,7 +96,7 @@ class MHMS(nn.Module):
         # Compute cost
         distance = torch.sum(T * C) / B # Average over batch
         
-        return distance
+        return distance, T
 
     def forward(self, input_ids, attention_mask, video_features):
         """
@@ -125,7 +125,7 @@ class MHMS(nn.Module):
         E_proj = self.text_projector(text_features)
         V_proj = self.video_projector(video_features)
         
-        ot_loss = self.compute_sinkhorn_loss_torch(E_proj, V_proj)
+        ot_loss, T_matrix = self.compute_sinkhorn_loss_torch(E_proj, V_proj)
         
         return {
             "text_seg_probs": text_seg_probs,
@@ -133,5 +133,48 @@ class MHMS(nn.Module):
             "video_seg_probs": video_seg_probs,
             "text_summ_probs": text_summ_probs,
             "video_summ_probs": video_summ_probs,
-            "ot_loss": ot_loss
+            "ot_loss": ot_loss,
+            "ot_alignment_matrix": T_matrix
         }
+
+    def generate_multimodal_summary(self, input_ids, attention_mask, video_features, threshold=0.5):
+        """
+        Follows the exact inference mechanism described in the MHMS paper Section 3.5.
+        Generates the visual and textual candidates, then uses Optimal Transport 
+        to compute the alignment Matrix T to select the best matching multimedia pairs.
+        """
+        self.eval()
+        with torch.no_grad():
+            outputs = self.forward(input_ids, attention_mask, video_features)
+            
+            text_probs = outputs["text_summ_probs"]   # (B, Num_Sentences)
+            video_probs = outputs["video_summ_probs"] # (B, Num_Shots)
+            T_matrix = outputs["ot_alignment_matrix"] # (B, Num_Sentences, Num_Shots)
+            
+            # The matrix T denotes the Wasserstein transportation cost matching.
+            # Best matches are pairs with the highest mass transport values in T.
+            matched_summaries = []
+            B = T_matrix.shape[0]
+            
+            for b in range(B):
+                # 1. Select Candidates via Summarizer probabilities
+                text_candidates = torch.where(text_probs[b] > threshold)[0]
+                video_candidates = torch.where(video_probs[b] > threshold)[0]
+                
+                # 2. Align candidates using the Transport Plan matrix T
+                alignments = []
+                for t_idx in text_candidates:
+                    for v_idx in video_candidates:
+                        # Higher value in T means stronger alignment 
+                        match_score = T_matrix[b, t_idx, v_idx].item()
+                        alignments.append({
+                            "text_idx": t_idx.item(),
+                            "video_idx": v_idx.item(),
+                            "match_score": match_score
+                        })
+                        
+                # Sort alignments to fetch the highest correlated multimodal summary pairs
+                alignments.sort(key=lambda x: x["match_score"], reverse=True)
+                matched_summaries.append(alignments)
+                
+            return matched_summaries
