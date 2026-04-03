@@ -23,21 +23,37 @@ def extract_summary_for_segment(video_path, save_dir, save_fname, n_clusters=3):
     frames = []
     histograms = []
     
-    while True:
+    max_retries = 20
+    retry_count = 0
+    total_frames_target = 100 # limit frames to keep memory low and speed up
+    
+    while len(frames) < total_frames_target:
         ret, frame = cap.read()
         if not ret:
-            break
+            retry_count += 1
+            if retry_count > max_retries:
+                break
+            continue
             
-        # Resize to process histogram generation faster
-        small_frame = cv2.resize(frame, (320, 240))
-        hsv = cv2.cvtColor(small_frame, cv2.COLOR_BGR2HSV)
+        retry_count = 0 # reset on success
         
-        # Compute color histogram
-        hist = cv2.calcHist([hsv], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-        hist = cv2.normalize(hist, hist).flatten()
-        
-        frames.append(frame)
-        histograms.append(hist)
+        # Skip some frames to move faster through the segment
+        if len(frames) % 5 != 0:
+            continue
+
+        try:
+            # Resize to process histogram generation faster
+            small_frame = cv2.resize(frame, (320, 240))
+            hsv = cv2.cvtColor(small_frame, cv2.COLOR_BGR2HSV)
+            
+            # Compute color histogram
+            hist = cv2.calcHist([hsv], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+            hist = cv2.normalize(hist, hist).flatten()
+            
+            frames.append(frame)
+            histograms.append(hist)
+        except Exception:
+            continue
         
     cap.release()
     
