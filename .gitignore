@@ -2,6 +2,11 @@
 cnn_data/
 *.zip
 
+# Embeddings (generated)
+embeddings/
+*.npy
+*.pkl
+
 # Python
 __pycache__/
 *.pyc
