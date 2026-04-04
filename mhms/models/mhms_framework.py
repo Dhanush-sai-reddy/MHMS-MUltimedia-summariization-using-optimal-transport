@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from mhms.models.video_temporal_segmentation import VTS
 from mhms.models.summarization import TextExtractiveSummarizer, VisualEncoderDecoderSummarizer
