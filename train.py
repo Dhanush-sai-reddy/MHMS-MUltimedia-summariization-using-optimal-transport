@@ -9,8 +9,8 @@ def train():
     print(f"Using device: {device}")
     
     # 1. Initialize Dataset and Dataloader
-    print("Loading CNN Multimodal Dataset...")
-    dataset = CNNMultimodalDataset(data_dir="cnn_data", max_sentences=20, max_words=64, visual_dim=1024)
+    print("Loading CNN Multimodal Dataset (BERT & ResNet Embeddings)...")
+    dataset = CNNMultimodalDataset(data_dir="cnn_data", embeddings_dir="embeddings", max_sentences=20, visual_dim=2048, text_dim=768)
     dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
     print(f"Loaded {len(dataset)} samples.")
     
@@ -23,8 +23,8 @@ def train():
     # Using small versions for demonstration purposes. 
     # Adjust omega_b based on expected sequence lengths in VTS.
     model = MHMS(
-        text_hidden_size=256,
-        visual_feature_dim=1024,
+        text_feature_dim=768,
+        visual_feature_dim=2048,
         video_hidden_dim=256,
         video_omega_b=3 
     )
@@ -45,8 +45,7 @@ def train():
         total_loss = 0
         
         for batch_idx, batch in enumerate(dataloader):
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
+            text_features = batch['text_features'].to(device)
             video_features = batch['video_features'].to(device)
             
             # Ground truth for Text Summarization
@@ -55,7 +54,7 @@ def train():
             optimizer.zero_grad()
             
             # Forward pass
-            outputs = model(input_ids, attention_mask, video_features)
+            outputs = model(text_features, video_features)
             
             # Retrieve components
             text_summ_probs = outputs['text_summ_probs']  # (B, Num_Sentences)
@@ -81,7 +80,11 @@ def train():
                       f"Loss: {loss.item():.4f} (Text: {l_text_summ.item():.4f}, OT: {ot_loss.item():.4f})")
                 
         avg_loss = total_loss / len(dataloader)
-        print(f"--- Epoch {epoch+1} Completed. Avg Loss: {avg_loss:.4f} ---")
+        print(f"--- Epoch {epoch+1} Completed. Avg Total Loss: {avg_loss:.4f} ---")
+        
+        # Save intermediate model
+        torch.save(model.state_dict(), f"mhms_epoch_{epoch+1}.pth")
+        print(f"Intermediate weights saved to mhms_epoch_{epoch+1}.pth")
 
     print("\nTraining Complete! Saving model...")
     torch.save(model.state_dict(), "mhms_model_weights.pth")

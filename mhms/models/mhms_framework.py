@@ -11,17 +11,13 @@ class MHMS(nn.Module):
     under a unified model aligned via Optimal Transport.
     """
     def __init__(self, 
-                 text_hidden_size=256, 
-                 visual_feature_dim=1024, 
+                 text_feature_dim=768, 
+                 visual_feature_dim=2048, 
                  video_hidden_dim=256,
                  video_omega_b=3):
         super(MHMS, self).__init__()
         
         # 1. Modality Segmenters (Feature Extractors)
-        # Using a simple Bi-GRU over custom word embeddings since we have the summaries and don't need heavy BERTs!
-        self.text_embedding = nn.Embedding(num_embeddings=30522, embedding_dim=128, padding_idx=0)
-        self.text_gru = nn.GRU(input_size=128, hidden_size=text_hidden_size//2, bidirectional=True, batch_first=True)
-        
         self.video_segmenter = VTS(
             visual_feature_dim=visual_feature_dim,
             hidden_dim=video_hidden_dim,
@@ -30,16 +26,14 @@ class MHMS(nn.Module):
         
         # 2. Projectors to a common semantic alignment dimension (Optimal Transport space)
         self.alignment_dim = 256
-        self.text_projector = nn.Linear(text_hidden_size, self.alignment_dim)
+        self.text_projector = nn.Linear(text_feature_dim, self.alignment_dim)
         
         # Video segmenter VTS outputs LSTM hidden features which we can project directly
-        # Wait, VTS forward returns probs. We need to extract the lstm spatial features in VTS.
-        # But we can also just project the raw visual features directly or build another sequence encoder.
         # Since we use simple video features, let's encode the sequence linearly.
         self.video_projector = nn.Linear(visual_feature_dim, self.alignment_dim)
         
         # 3. Summarization Modules
-        self.text_summarizer = TextExtractiveSummarizer(input_dim=text_hidden_size, hidden_dim=text_hidden_size//2)
+        self.text_summarizer = TextExtractiveSummarizer(input_dim=text_feature_dim, hidden_dim=text_feature_dim//2)
         
         # For video summarization, we extract visual seq attention scores directly using Encoder-Decoder
         self.video_summarizer = VisualEncoderDecoderSummarizer(input_dim=visual_feature_dim, hidden_dim=video_hidden_dim)
@@ -58,9 +52,9 @@ class MHMS(nn.Module):
         B, K, D = E.shape
         _, M, _ = V.shape
         
-        # Normalize embeddings to compute Cosine Distance
-        E_norm = F.normalize(E, p=2, dim=-1)
-        V_norm = F.normalize(V, p=2, dim=-1)
+        # Normalize embeddings to compute Cosine Distance, avoiding zero-division
+        E_norm = F.normalize(E, p=2, dim=-1, eps=1e-8)
+        V_norm = F.normalize(V, p=2, dim=-1, eps=1e-8)
         
         # Cosine similarity matrix (B, K, M)
         sim = torch.bmm(E_norm, V_norm.transpose(1, 2))
@@ -93,31 +87,21 @@ class MHMS(nn.Module):
         
         return distance, T
 
-    def forward(self, input_ids, attention_mask, video_features):
+    def forward(self, text_features, video_features):
         """
         Args:
-            input_ids: (B, Num_Sentences, Max_Words)
-            attention_mask: (B, Num_Sentences, Max_Words)
-            video_features: (B, Num_Shots, Video_Dim)
+            text_features: (B, Num_Sentences, 768) - Pre-computed BERT sentence embeddings
+            video_features: (B, Num_Shots, 2048) - Pre-computed ResNet keyframe embeddings
             
         Returns:
             dict containing probabilities and OT loss
         """
         
-        # 1. Text Feature Extraction (Lightweight GRU instead of BERT)
-        # Assuming input_ids is (B, Sentences, Words), we treat as (B*Sentences, Words)
-        B, S, W = input_ids.shape
-        flat_input = input_ids.view(B * S, W)
+        B, S, _ = text_features.shape
         
-        embeds = self.text_embedding(flat_input)     # (B*S, W, 128)
-        gru_out, _ = self.text_gru(embeds)           # (B*S, W, text_hidden_size)
-        
-        # Mean pool over words to get sentence feature natively
-        sentence_feats = gru_out.mean(dim=1)         # (B*S, text_hidden_size)
-        text_features = sentence_feats.view(B, S, -1) # (B, S, text_hidden_size)
-        
-        # We don't need text segmentation probabilities since we aren't doing the full BERT split!
-        text_seg_probs = torch.zeros(B, S, device=input_ids.device)
+        # Text processing is handled by pre-computed BERT features, 
+        # so we don't recalculate segmentation probs here.
+        text_seg_probs = torch.zeros(B, S, device=text_features.device)
         
         # 2. Video Segmentation
         video_seg_probs = self.video_segmenter(video_features)
@@ -148,7 +132,7 @@ class MHMS(nn.Module):
             "ot_alignment_matrix": T_matrix
         }
 
-    def generate_multimodal_summary(self, input_ids, attention_mask, video_features, threshold=0.5):
+    def generate_multimodal_summary(self, text_features, video_features, threshold=0.5):
         """
         Follows the exact inference mechanism described in the MHMS paper Section 3.5.
         Generates the visual and textual candidates, then uses Optimal Transport 
@@ -156,7 +140,7 @@ class MHMS(nn.Module):
         """
         self.eval()
         with torch.no_grad():
-            outputs = self.forward(input_ids, attention_mask, video_features)
+            outputs = self.forward(text_features, video_features)
             
             text_probs = outputs["text_summ_probs"]   # (B, Num_Sentences)
             video_probs = outputs["video_summ_probs"] # (B, Num_Shots)

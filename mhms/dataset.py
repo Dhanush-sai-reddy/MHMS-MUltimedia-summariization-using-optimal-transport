@@ -4,19 +4,20 @@ import numpy as np
 from torch.utils.data import Dataset
 
 class CNNMultimodalDataset(Dataset):
-    def __init__(self, data_dir="cnn_data", max_sentences=20, max_words=64, visual_dim=1024, max_shots=20):
+    def __init__(self, data_dir="cnn_data", embeddings_dir="embeddings", max_sentences=20, visual_dim=2048, text_dim=768, max_shots=20):
         """
+        Loads pre-extracted BERT and ResNet embeddings.
         Args:
-            data_dir: Path to cnn_data directory.
-            max_sentences: Maximum sentences per article.
-            max_words: Maximum words per sentence.
-            visual_dim: The mock video feature dimension mapping to VTS.
+            data_dir: Path to cnn_data directory for labels.
+            embeddings_dir: Path to the generated .npy embeddings.
+            max_sentences: Maximum sentences per article (temporal steps).
+            visual_dim: The video feature dimension (2048 for ResNet50).
+            text_dim: Text feature dimension (768 for BERT).
             max_shots: Maximum shots per video for padding.
         """
-        self.data_dir = data_dir
         self.max_sentences = max_sentences
-        self.max_words = max_words
         self.visual_dim = visual_dim
+        self.text_dim = text_dim
         self.max_shots = max_shots
         
         # Read the global labels
@@ -32,92 +33,75 @@ class CNNMultimodalDataset(Dataset):
                         nums = [float(x) for x in line.split()]
                         self.labels.append(nums)
         
-        # Find all valid directories
         self.samples = []
-        for d in os.listdir(data_dir):
-            dir_path = os.path.join(data_dir, d)
-            if os.path.isdir(dir_path) and d.isdigit():
-                # We map folder ID as index to labels if possible 
-                # (adjust logic based on actual index mapping if it differs)
-                idx = int(d)
-                self.samples.append({
-                    "id": idx,
-                    "path": dir_path
-                })
         
+        text_dir = os.path.join(embeddings_dir, "text")
+        visual_dir = os.path.join(embeddings_dir, "visual")
+        
+        if not os.path.exists(text_dir) or not os.path.exists(visual_dir):
+            print("Warning: Embeddings directory not found. Please run embedding_pipeline.py first.")
+            return
+
+        # Find cases that have BOTH text and visual embeddings
+        for f in os.listdir(text_dir):
+            if f.endswith(".npy"):
+                case_id_str = f.replace("case_", "").replace(".npy", "")
+                if case_id_str.isdigit():
+                    case_id = int(case_id_str)
+                    vis_path = os.path.join(visual_dir, f"case_{case_id}.npy")
+                    if os.path.exists(vis_path):
+                        self.samples.append({
+                            "id": case_id,
+                            "text_path": os.path.join(text_dir, f),
+                            "visual_path": vis_path
+                        })
+                        
         self.samples.sort(key=lambda x: x["id"])
+        print(f"Dataset initialized with {len(self.samples)} valid multimodal cases.")
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        sample_path = sample["path"]
         sample_id = sample["id"]
         
-        # 1. Read Text
-        artitle_sec_path = os.path.join(sample_path, 'artitle_section.txt')
-        sentences = []
-        if os.path.exists(artitle_sec_path):
-            with open(artitle_sec_path, 'r', encoding='utf-8') as f:
-                sentences = [s.strip() for s in f.readlines() if s.strip()]
-                
-        # Truncate or Pad sentences
-        actual_sents = len(sentences)
-        sentences = sentences[:self.max_sentences]
+        # 1. Load Text Embeddings (BERT 768-dim)
+        text_npy = np.load(sample["text_path"])
+        actual_sents = text_npy.shape[0]
         
-        input_ids = torch.zeros((self.max_sentences, self.max_words), dtype=torch.long)
-        attention_mask = torch.zeros((self.max_sentences, self.max_words), dtype=torch.long)
+        text_features = torch.zeros((self.max_sentences, self.text_dim), dtype=torch.float)
+        populated_sents = min(actual_sents, self.max_sentences)
+        text_features[:populated_sents, :] = torch.from_numpy(text_npy[:populated_sents, :])
         
-        # Zero-dependency tokenizer since we already have the summaries!
-        for i, sent in enumerate(sentences):
-            words = sent.split()[:self.max_words]
-            for j, w in enumerate(words):
-                # Basic token index simulation to totally avoid heavy BERT tokenizers 
-                input_ids[i, j] = (abs(hash(w)) % 30000) + 1
-                attention_mask[i, j] = 1
-            
-        # 2. Read Labels (Text Extractive Labels)
-        # Using sample_id cautiously. If label length is 444 and IDs go up to 262, 
-        # let's assume index in labels array is (sample_id - 1).
+        text_mask = torch.zeros(self.max_sentences, dtype=torch.long)
+        text_mask[:populated_sents] = 1
+        
+        # 2. Add Text Extractive Labels
         label_idx = min(sample_id - 1, len(self.labels) - 1)
         target_labels = self.labels[label_idx] if label_idx >= 0 else []
         
-        # Pad target labels to max_sentences
         summ_labels = torch.zeros(self.max_sentences, dtype=torch.float)
         for i, val in enumerate(target_labels[:self.max_sentences]):
             summ_labels[i] = val
             
-        # 3. Handle Video Features (Mocking extraction from .ts files)
-        video_dir = os.path.join(sample_path, 'video')
-        actual_shots = 10 # default fallback
-        if os.path.exists(video_dir):
-            ts_files = [f for f in os.listdir(video_dir) if f.endswith('.ts')]
-            actual_shots = max(1, len(ts_files)) 
-            
-        # We simulate CNN extracted temporal features for these shots padded to max_shots
-        video_features = torch.zeros((self.max_shots, self.visual_dim), dtype=torch.float)
+        # 3. Load Visual Embeddings (ResNet 2048-dim)
+        vis_npy = np.load(sample["visual_path"])
+        actual_shots = vis_npy.shape[0]
         
-        # Populate up to max_shots
+        video_features = torch.zeros((self.max_shots, self.visual_dim), dtype=torch.float)
         populated_shots = min(actual_shots, self.max_shots)
-        mock_real_features = torch.randn((populated_shots, self.visual_dim), dtype=torch.float)
-        video_features[:populated_shots, :] = mock_real_features
+        video_features[:populated_shots, :] = torch.from_numpy(vis_npy[:populated_shots, :])
+        
+        video_mask = torch.zeros(self.max_shots, dtype=torch.long)
+        video_mask[:populated_shots] = 1
 
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "video_features": video_features,
-            "summ_labels": summ_labels,
-            "num_sentences": min(actual_sents, self.max_sentences),
+            "text_features": text_features,      # (Max_Sents, 768)
+            "text_mask": text_mask,              # (Max_Sents)
+            "video_features": video_features,    # (Max_Shots, 2048)
+            "video_mask": video_mask,            # (Max_Shots)
+            "summ_labels": summ_labels,          # (Max_Sents)
+            "num_sentences": populated_sents,
             "num_shots": populated_shots
         }
-
-if __name__ == "__main__":
-    # Test dataset instantiation
-    ds = CNNMultimodalDataset(data_dir="../cnn_data")
-    if len(ds) > 0:
-        sample = ds[0]
-        print(f"Loaded Sample Shapes:")
-        print(f"- input_ids: {sample['input_ids'].shape}")
-        print(f"- video_features: {sample['video_features'].shape}")
-        print(f"- summ_labels: {sample['summ_labels'].shape}")

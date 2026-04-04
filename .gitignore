@@ -25,6 +25,7 @@ build/
 mhms/outputs/
 *.pt
 *.pth
+!mhms_model_weights.pth
 *.onnx
 *.bin
 

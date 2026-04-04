@@ -9,8 +9,8 @@ def generate_and_save_summaries():
     print(f"Using device: {device}")
     
     # 1. Initialize Dataset
-    print("Loading CNN Multimodal Dataset for Inference...")
-    dataset = CNNMultimodalDataset(data_dir="cnn_data", max_sentences=20, max_words=64, visual_dim=1024, max_shots=20)
+    print("Loading CNN Multimodal Dataset (BERT & ResNet Embeddings) for Inference...")
+    dataset = CNNMultimodalDataset(data_dir="cnn_data", embeddings_dir="embeddings", max_sentences=20, visual_dim=2048, text_dim=768, max_shots=20)
     
     if len(dataset) == 0:
         print("Dataset is empty. Ensure 'cnn_data' has the right folder structure.")
@@ -19,8 +19,8 @@ def generate_and_save_summaries():
     # 2. Initialize the Model framework
     print("Initializing MHMS Framework...")
     model = MHMS(
-        text_hidden_size=256,
-        visual_feature_dim=1024,
+        text_feature_dim=768,
+        visual_feature_dim=2048,
         video_hidden_dim=256,
         video_omega_b=3 
     )
@@ -41,17 +41,16 @@ def generate_and_save_summaries():
     with torch.no_grad():
         for i in range(len(dataset)):
             sample = dataset[i]
-            sample_path = dataset.samples[i]["path"]  # "cnn_data/5"
+            case_id = dataset.samples[i]["id"]
+            sample_path = os.path.join("cnn_data", str(case_id))
             
             # Need to add batch dimension (1, ...)
-            input_ids = sample['input_ids'].unsqueeze(0).to(device)
-            attention_mask = sample['attention_mask'].unsqueeze(0).to(device)
+            text_features = sample['text_features'].unsqueeze(0).to(device)
             video_features = sample['video_features'].unsqueeze(0).to(device)
             
             # Run inference method which leverages OT to fetch alignment pairings
             matched_summaries = model.generate_multimodal_summary(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
+                text_features=text_features,
                 video_features=video_features,
                 threshold=0.45 # Extract sequences with probability score over this percentage length
             )
