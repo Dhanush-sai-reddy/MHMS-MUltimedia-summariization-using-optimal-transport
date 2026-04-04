@@ -12,13 +12,13 @@ Implementation of the MHMS framework from [arXiv:2204.03734](https://arxiv.org/a
 CNN Dataset (257 articles + 205 videos)
         │
         ├── Text Pipeline
-        │     artitle_section.txt → TF-IDF → text_embeddings.npy
+        │     artitle_section.txt → BERT (base-uncased) → text_embeddings.npy (768-dim)
         │     highlight.txt (ground truth summaries)
         │     label.txt (extractive labels)
         │
         ├── Video Pipeline
         │     video/*.ts → K-Means + Laplacian → *_summary.jpg (keyframes)
-        │     Keyframe images → HSV histogram + texture → visual_embeddings.npy
+        │     Keyframe images → ResNet50 → visual_embeddings.npy (2048-dim)
         │
         └── Optimal Transport Alignment
               text_embeddings ←→ visual_embeddings
@@ -32,8 +32,8 @@ CNN Dataset (257 articles + 205 videos)
 
 ### Core Pipeline
 
-- [embedding_pipeline.py](https://github.com/Dhanush-sai-reddy/MHMS-MUltimedia-summariization-using-optimal-transport/blob/main/embedding_pipeline.py) — Extracts TF-IDF text embeddings and visual feature embeddings from the CNN dataset, stores centrally in `embeddings/`.
-- [optimal_transport.py](https://github.com/Dhanush-sai-reddy/MHMS-MUltimedia-summariization-using-optimal-transport/blob/main/optimal_transport.py) — Sinkhorn-Knopp algorithm for solving the entropic regularized Optimal Transport problem between modalities.
+- [embedding_pipeline.py](https://github.com/Dhanush-sai-reddy/MHMS-MUltimedia-summariization-using-optimal-transport/blob/main/embedding_pipeline.py) — Extracts BERT (768-dim) text embeddings and ResNet50 (2048-dim) visual embeddings iteratively across the dataset, storing them in `embeddings/`.
+- [optimal_transport.py](https://github.com/Dhanush-sai-reddy/MHMS-MUltimedia-summariization-using-optimal-transport/blob/main/optimal_transport.py) — Native Sinkhorn-Knopp algorithm for solving the entropic regularized Optimal Transport problem.
 - [generate_video_summaries.py](https://github.com/Dhanush-sai-reddy/MHMS-MUltimedia-summariization-using-optimal-transport/blob/main/generate_video_summaries.py) — Extracts keyframes from `.ts` video segments using K-Means clustering + Laplacian sharpness selection.
 - [generate_summaries.py](https://github.com/Dhanush-sai-reddy/MHMS-MUltimedia-summariization-using-optimal-transport/blob/main/generate_summaries.py) — Generates OT-aligned multimodal summary pairs and saves `multimodal_summary_output.json` per case.
 - [train.py](https://github.com/Dhanush-sai-reddy/MHMS-MUltimedia-summariization-using-optimal-transport/blob/main/train.py) — Trains the full MHMS neural framework with BCE text loss + OT cross-modal alignment loss.
@@ -68,21 +68,21 @@ python generate_video_summaries.py
 
 Processes `video/*.ts` segments → K-Means clustering by color histogram → selects sharpest frame per cluster → saves `*_summary.jpg`.
 
-### 2. Generate Embeddings
+### 2. Extract Deep Neural Embeddings
 
 ```bash
 python embedding_pipeline.py
 ```
 
-Extracts text (TF-IDF, 512-dim) and visual (HSV histogram + texture, 576-dim) embeddings. Outputs stored in `embeddings/text/` and `embeddings/visual/`.
+Passes sentences through HuggingFace `bert-base-uncased` (768-dim) and images through `torchvision.models.resnet50` (2048-dim). Outputs automatically stored in `embeddings/text/` and `embeddings/visual/`.
 
-### 3. Run Optimal Transport Alignment
+### 3. Train the Neural Framework (MHMS)
 
 ```bash
-python optimal_transport.py
+python train.py
 ```
 
-Demonstrates the Sinkhorn-Knopp algorithm: cosine distance cost matrix → entropic regularization → optimal transport plan `T`.
+Executes the End-to-End neural optimization loop. Computes Supervised Text Extractive Loss (BCE) combined with the Unsupervised Optmial Transport Cross-Modal Loss to correctly backpropagate and train the framework. Saves `mhms_model_weights.pth`.
 
 ### 4. Generate Multimodal Summaries
 
@@ -90,7 +90,7 @@ Demonstrates the Sinkhorn-Knopp algorithm: cosine distance cost matrix → entro
 python generate_summaries.py
 ```
 
-Uses the MHMS framework to produce OT-aligned text↔visual summary pairs as JSON.
+Loads the trained PyTorch weights and generates OT-aligned text↔visual matching pairs using the trained neural attention modules. Saves `multimodal_summary_output.json` directly into each case folder.
 
 ---
 
