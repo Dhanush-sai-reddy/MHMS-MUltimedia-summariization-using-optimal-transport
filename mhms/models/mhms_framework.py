@@ -173,3 +173,51 @@ class MHMS(nn.Module):
                 matched_summaries.append(alignments)
                 
             return matched_summaries
+
+    def generate_multimodal_summary_topk(self, text_features, video_features, top_k=3):
+        """
+        Adaptive Top-K inference: selects the top-K highest-scoring candidates
+        from each modality by their summarizer probabilities, then uses the 
+        Optimal Transport plan T to align them into multimodal pairs.
+        
+        This avoids the problem of absolute thresholding when model probabilities
+        are low (e.g., under-trained video branch).
+        """
+        self.eval()
+        with torch.no_grad():
+            outputs = self.forward(text_features, video_features)
+            
+            text_probs = outputs["text_summ_probs"]   # (B, Num_Sentences)
+            video_probs = outputs["video_summ_probs"] # (B, Num_Shots)
+            T_matrix = outputs["ot_alignment_matrix"] # (B, Num_Sentences, Num_Shots)
+            
+            matched_summaries = []
+            B = T_matrix.shape[0]
+            
+            for b in range(B):
+                # Select Top-K text candidates (by summarizer probability)
+                k_text = min(top_k, text_probs.shape[1])
+                text_topk_indices = torch.topk(text_probs[b], k_text).indices
+                
+                # Select Top-K video candidates (by summarizer probability)
+                k_video = min(top_k, video_probs.shape[1])
+                video_topk_indices = torch.topk(video_probs[b], k_video).indices
+                
+                # Pair candidates using the OT transport plan
+                alignments = []
+                for t_idx in text_topk_indices:
+                    for v_idx in video_topk_indices:
+                        match_score = T_matrix[b, t_idx, v_idx].item()
+                        alignments.append({
+                            "text_idx": t_idx.item(),
+                            "video_idx": v_idx.item(),
+                            "match_score": match_score,
+                            "text_prob": text_probs[b, t_idx].item(),
+                            "video_prob": video_probs[b, v_idx].item()
+                        })
+                
+                # Sort by OT alignment strength
+                alignments.sort(key=lambda x: x["match_score"], reverse=True)
+                matched_summaries.append(alignments)
+                
+            return matched_summaries

@@ -1,0 +1,195 @@
+================================================================================
+  MHMS: Multimodal Hierarchical Multimedia Summarization
+  arXiv:2204.03734 — Qiu et al., 2022 (WACV 2023)
+  
+  Reference extracted from paper for implementation verification.
+  This file saves us from re-reading the paper every time.
+================================================================================
+
+AUTHORS: Jielin Qiu, Jiacheng Zhu, Mengdi Xu, Franck Dernoncourt, 
+         Trung Bui, Zhaowen Wang, Bo Li, Ding Zhao, Hailin Jin
+
+ABSTRACT:
+  Multimedia summarization with multimodal output — automatically generating 
+  cover images and titles for news articles. MHMS interacts visual and language 
+  domains to generate both video and textual summaries. Uses cross-domain 
+  alignment via Optimal Transport distance.
+
+================================================================================
+ARCHITECTURE OVERVIEW
+================================================================================
+
+The framework has 5 modules:
+  1. Video Temporal Segmentation (VTS)
+  2. Visual Summarization (Encoder-Decoder with Attention)
+  3. Textual Segmentation (HierarchicalBERT)
+  4. Textual Summarization (BART-Large-CNN in paper, we use BiLSTM extractive)
+  5. Cross-Domain Alignment (Sinkhorn Optimal Transport)
+
+================================================================================
+SECTION 3.1 — VIDEO TEMPORAL SEGMENTATION (VTS)
+================================================================================
+
+Input: Video shot features X = [x_1, ..., x_n], each x_i is a visual feature vector.
+
+Two branches:
+  VTS_d (Difference): 
+    - Two temporal convolution layers embed omega_b shots BEFORE and AFTER boundary
+    - Inner product of the two conv outputs → scalar difference score
+    
+  VTS_r (Relation):
+    - Temporal convolution over full 2*omega_b window
+    - Max pooling → relation representation
+
+  omega_b = 5 (from Rao et al. 2020)
+  
+Combined: [VTS_d scalar, VTS_r vector] → Bi-LSTM → boundary scores s_i ∈ [0,1]
+
+Equation 3 (boundary thresholding):
+  P̂_vi = 1 if s_i > τ, else 0
+  where τ = 0.5
+
+================================================================================
+SECTION 3.2 — VISUAL SUMMARIZATION
+================================================================================
+
+Encoder-Decoder architecture with attention mechanism.
+
+ENCODER: Bi-LSTM
+  Input:  Video shots X = [x_1, ..., x_m]
+  Output: Encodings E = [e_1, ..., e_m]   (bidirectional hidden states)
+
+DECODER: LSTM (auto-regressive)
+  Generates importance scores D = [d_1, ..., d_m]
+
+ATTENTION MECHANISM:
+  Eq 6:  e_t^i = score(s_{t-1}, e_i)           [energy between decoder state and encoder output]
+  Eq 7:  β_t^i = e_i^T · W_a · s_{t-1}         [bilinear attention score]
+  Eq 8:  α_t^i = exp(β_t^i) / Σ_j exp(β_t^j)   [softmax attention weights]
+
+  Context vector: E_t = Σ_i α_t^i · e_i          [weighted sum of encoder outputs]
+
+DECODER INPUT at each step t:
+  [E_t, d_{t-1}]  (context vector concatenated with previous importance score)
+
+OUTPUT:
+  d_t = sigmoid(FC(s_t))   [importance score for shot t]
+
+================================================================================
+SECTION 3.3 — TEXTUAL SEGMENTATION (HierarchicalBERT)
+================================================================================
+
+Two-level Transformer architecture:
+
+Level 1 — Sentence Encoder:
+  - BERT-Base (12 attention heads, 768-dim embeddings)
+  - Each sentence → [CLS] token → 768-dim representation
+  - Max 64 word-pieces per sentence
+
+Level 2 — Article Encoder:
+  - Transformer encoder over the sequence of [CLS] tokens
+  - 12 layers, captures cross-sentence relationships
+  - Max 128 sentences per document
+  - Total: 24 layers (12 sentence + 12 article)
+
+Output: Boundary probability for each sentence position.
+
+================================================================================
+SECTION 3.4 — TEXTUAL SUMMARIZATION
+================================================================================
+
+Paper uses: BART-Large-CNN (pretrained, abstractive)
+  - Sequence-to-sequence model
+  - 12 layers encoder + 12 layers decoder
+  - Generates abstractive text summaries
+
+Our implementation: BiLSTM extractive summarizer (simplified)
+  - Uses extractive labels from label.txt
+  - BiLSTM → FC → sigmoid → probability per sentence
+  - Valid simplification; paper also compares against extractive baselines
+
+================================================================================
+SECTION 3.5 — CROSS-DOMAIN ALIGNMENT (OPTIMAL TRANSPORT)
+================================================================================
+
+The KEY CONTRIBUTION of the paper.
+
+COST MATRIX (Eq 10):
+  C_km = 1 - (e_k^T · v_m) / (||e_k|| · ||v_m||)
+  i.e., Cosine Distance between text embedding e_k and visual embedding v_m
+
+ENTROPIC REGULARIZED OT (Eq 12):
+  L_OT(V, E) = min_T Σ_k Σ_m T_km · C_km + λ · H(T)
+  where H(T) is the entropy regularization term
+
+SINKHORN ALGORITHM:
+  1. Gibbs kernel: K = exp(-C / λ)
+  2. Initialize u, v as uniform vectors
+  3. Iterate:  u = μ / (K·v),  v = ν / (K^T·u)
+  4. Transport plan: T = diag(u) · K · diag(v)
+
+MARGINAL DISTRIBUTIONS:
+  μ_k = 1/K  (uniform over text segments)
+  ν_m = 1/M  (uniform over video segments)
+
+OVERALL TRAINING LOSS:
+  L = L_text + λ · L_OT
+  
+  L_text = supervised text summarization loss (BCE with extractive labels)
+  L_OT   = unsupervised OT cross-modal alignment loss
+  
+  The beauty: video summarization has NO labels. It's trained entirely 
+  through the OT loss, which forces the visual features to align with 
+  the text features, transferring the supervised signal across modalities.
+
+================================================================================
+EXPERIMENTS & TRAINING DETAILS
+================================================================================
+
+DATASETS:
+  - VMSMO: 184,920 samples
+  - CNN: 203 samples  ← our dataset
+  - Daily Mail: 1,970 samples
+
+TRAINING:
+  - Epochs: 10-20 (varies by module)
+  - Batch size: 32
+  - Optimizer: AdamW
+  - Learning rate: ~2e-5 to 5e-5 (standard BERT/BART fine-tuning range)
+  - Hardware: 4× NVIDIA Tesla V100 GPUs
+
+PAPER RESULTS ON CNN DATASET:
+  ┌───────────┬─────────┐
+  │ Metric    │  Score  │
+  ├───────────┼─────────┤
+  │ ROUGE-1   │  28.02  │
+  │ ROUGE-2   │   8.94  │
+  │ ROUGE-L   │  18.89  │
+  └───────────┴─────────┘
+
+INFERENCE:
+  - Compute transport plan T between text and video embeddings
+  - T[k,m] represents alignment strength between sentence k and shot m
+  - Pair high-probability text sentences with their highest-aligned video shots
+  - Select best matching multimedia pairs based on T values
+
+================================================================================
+OUR IMPLEMENTATION DIFFERENCES (vs paper)
+================================================================================
+
+1. Text Summarizer: BiLSTM extractive (ours) vs BART abstractive (paper)
+   → Reasonable simplification, paper compares against extractive baselines too
+
+2. omega_b: 3 (ours) vs 5 (paper)
+   → Needed because our max_shots=20, omega_b=5 needs seq≥10
+
+3. Training: 3 epochs / batch=2 / lr=1e-4 / CPU (ours) vs 10-20 epochs / batch=32 / lr=2e-5 / 4×V100 (paper)
+   → Major gap — causes under-trained video branch
+
+4. Max sentences: 20 (ours) vs 128 (paper)
+   → Dataset limitation
+
+5. HierarchicalBERT: Implemented but not used in forward pass
+   → We use pre-computed BERT embeddings directly (equivalent result)
+
+================================================================================

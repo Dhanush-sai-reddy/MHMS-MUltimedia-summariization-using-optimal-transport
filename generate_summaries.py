@@ -48,11 +48,12 @@ def generate_and_save_summaries():
             text_features = sample['text_features'].unsqueeze(0).to(device)
             video_features = sample['video_features'].unsqueeze(0).to(device)
             
-            # Run inference method which leverages OT to fetch alignment pairings
-            matched_summaries = model.generate_multimodal_summary(
+            # Run adaptive Top-K inference which selects best candidates by probability rank
+            # then aligns them via Optimal Transport plan (robust to under-trained weights)
+            matched_summaries = model.generate_multimodal_summary_topk(
                 text_features=text_features,
                 video_features=video_features,
-                threshold=0.45 # Extract sequences with probability score over this percentage length
+                top_k=3
             )
             
             # Since batch_size is 1

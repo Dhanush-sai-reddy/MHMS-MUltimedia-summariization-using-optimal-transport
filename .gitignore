@@ -25,7 +25,6 @@ build/
 mhms/outputs/
 *.pt
 *.pth
-!mhms_model_weights.pth
 *.onnx
 *.bin
 
@@ -49,3 +48,9 @@ Desktop.ini
 
 # Logs
 *.log
+
+# Results (generated)
+results/
+
+# Diagnostic scripts (dev only)
+diagnose_model.py
