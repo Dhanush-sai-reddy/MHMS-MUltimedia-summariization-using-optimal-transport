@@ -8,3 +8,4 @@ rouge-score
 qwen-vl-utils
 accelerate>=0.26.0
 pillow
+python-dotenv

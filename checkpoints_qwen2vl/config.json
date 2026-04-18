@@ -1,0 +1,11 @@
+{
+  "embedding_dim": 2560,
+  "video_hidden_dim": 512,
+  "text_hidden_dim": 512,
+  "video_omega_b": 3,
+  "epochs": 5,
+  "batch_size": 2,
+  "learning_rate": 0.0001,
+  "lambda_ot": 0.1,
+  "embeddings_dir": "embeddings_qwen2vl"
+}
