@@ -2,11 +2,13 @@ import os
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from transformers import BertTokenizer
+import re
 
 class CNNMultimodalDataset(Dataset):
     def __init__(self, data_dir="cnn_data", embeddings_dir="embeddings", max_sentences=20, visual_dim=2048, text_dim=768, max_shots=20):
         """
-        Loads pre-extracted BERT and ResNet embeddings.
+        Loads pre-extracted BERT and ResNet embeddings + raw text for HierarchicalBERT.
         Args:
             data_dir: Path to cnn_data directory for labels.
             embeddings_dir: Path to the generated .npy embeddings.
@@ -19,6 +21,8 @@ class CNNMultimodalDataset(Dataset):
         self.visual_dim = visual_dim
         self.text_dim = text_dim
         self.max_shots = max_shots
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.max_words_per_sentence = 64  # Paper spec: 64 word-pieces per sentence
         
         # Read the global labels
         label_file = os.path.join(data_dir, 'label.txt')
@@ -49,11 +53,14 @@ class CNNMultimodalDataset(Dataset):
                 if case_id_str.isdigit():
                     case_id = int(case_id_str)
                     vis_path = os.path.join(visual_dir, f"case_{case_id}.npy")
+                    # Also check if raw text exists (for HierarchicalBERT)
+                    raw_text_path = os.path.join(data_dir, str(case_id), "artitle_section.txt")
                     if os.path.exists(vis_path):
                         self.samples.append({
                             "id": case_id,
                             "text_path": os.path.join(text_dir, f),
-                            "visual_path": vis_path
+                            "visual_path": vis_path,
+                            "raw_text_path": raw_text_path
                         })
                         
         self.samples.sort(key=lambda x: x["id"])
@@ -61,6 +68,47 @@ class CNNMultimodalDataset(Dataset):
 
     def __len__(self):
         return len(self.samples)
+
+    def _split_into_sentences(self, text):
+        """Split text into sentences using simple heuristics."""
+        # Replace common abbreviations
+        text = text.replace('U.S.', 'US')
+        text = text.replace('Dr.', 'Dr')
+        text = text.replace('Mr.', 'Mr')
+        text = text.replace('Mrs.', 'Mrs')
+        text = text.replace('Ms.', 'Ms')
+        
+        # Split on sentence boundaries
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        return sentences
+    
+    def _tokenize_sentences(self, sentences, max_sents=None):
+        """
+        Tokenize a list of sentences for HierarchicalBERT input.
+        Returns:
+            input_ids: (num_sentences, max_words_per_sentence)
+            attention_mask: (num_sentences, max_words_per_sentence)
+        """
+        if max_sents is None:
+            max_sents = self.max_sentences
+        
+        num_sents = min(len(sentences), max_sents)
+        input_ids = torch.zeros((max_sents, self.max_words_per_sentence), dtype=torch.long)
+        attention_mask = torch.zeros((max_sents, self.max_words_per_sentence), dtype=torch.long)
+        
+        for i, sent in enumerate(sentences[:max_sents]):
+            tokenized = self.tokenizer(
+                sent,
+                max_length=self.max_words_per_sentence,
+                padding='max_length',
+                truncation=True,
+                return_tensors='pt'
+            )
+            input_ids[i] = tokenized['input_ids'].squeeze(0)
+            attention_mask[i] = tokenized['attention_mask'].squeeze(0)
+        
+        return input_ids, attention_mask
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
@@ -76,6 +124,19 @@ class CNNMultimodalDataset(Dataset):
         
         text_mask = torch.zeros(self.max_sentences, dtype=torch.long)
         text_mask[:populated_sents] = 1
+        
+        # 1b. Load and tokenize raw text for HierarchicalBERT
+        input_ids = torch.zeros((self.max_sentences, self.max_words_per_sentence), dtype=torch.long)
+        attention_mask = torch.zeros((self.max_sentences, self.max_words_per_sentence), dtype=torch.long)
+        
+        if os.path.exists(sample["raw_text_path"]):
+            try:
+                with open(sample["raw_text_path"], 'r', encoding='utf-8') as f:
+                    raw_text = f.read()
+                sentences = self._split_into_sentences(raw_text)
+                input_ids, attention_mask = self._tokenize_sentences(sentences)
+            except Exception as e:
+                print(f"Warning: Could not load raw text for case {sample_id}: {e}")
         
         # 2. Add Text Extractive Labels
         label_idx = min(sample_id - 1, len(self.labels) - 1)
@@ -99,9 +160,12 @@ class CNNMultimodalDataset(Dataset):
         return {
             "text_features": text_features,      # (Max_Sents, 768)
             "text_mask": text_mask,              # (Max_Sents)
+            "text_input_ids": input_ids,         # (Max_Sents, Max_Words) - FOR HierarchicalBERT
+            "text_attention_mask": attention_mask,  # (Max_Sents, Max_Words) - FOR HierarchicalBERT
             "video_features": video_features,    # (Max_Shots, 2048)
             "video_mask": video_mask,            # (Max_Shots)
             "summ_labels": summ_labels,          # (Max_Sents)
             "num_sentences": populated_sents,
             "num_shots": populated_shots
         }
+

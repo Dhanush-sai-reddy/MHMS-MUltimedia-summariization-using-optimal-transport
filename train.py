@@ -47,14 +47,16 @@ def train():
         for batch_idx, batch in enumerate(dataloader):
             text_features = batch['text_features'].to(device)
             video_features = batch['video_features'].to(device)
+            text_input_ids = batch['text_input_ids'].to(device)
+            text_attention_mask = batch['text_attention_mask'].to(device)
             
             # Ground truth for Text Summarization
             summ_labels = batch['summ_labels'].to(device) # (B, max_sentences)
             
             optimizer.zero_grad()
             
-            # Forward pass
-            outputs = model(text_features, video_features)
+            # Forward pass - Now includes HierarchicalBERT text segmentation
+            outputs = model(text_features, video_features, text_input_ids, text_attention_mask)
             
             # Retrieve components
             text_summ_probs = outputs['text_summ_probs']  # (B, Num_Sentences)

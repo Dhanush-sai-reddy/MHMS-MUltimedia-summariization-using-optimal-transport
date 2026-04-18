@@ -52,5 +52,4 @@ Desktop.ini
 # Results (generated)
 results/
 
-# Diagnostic scripts (dev only)
 diagnose_model.py
