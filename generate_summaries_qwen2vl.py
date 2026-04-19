@@ -12,7 +12,7 @@ def generate_and_save_summaries():
     DATA_DIR = "cnn_data"
     EMBEDDINGS_DIR = "embeddings_qwen2vl"
     CHECKPOINT_DIR = "checkpoints_qwen2vl"
-    EMBEDDING_DIM = 2560 # Qwen3-VL-4B hidden size
+    EMBEDDING_DIM = 1536 # Qwen2-VL-2B hidden size
     VIDEO_HIDDEN_DIM = 512
     TEXT_HIDDEN_DIM = 512
     VIDEO_OMEGA_B = 3
@@ -58,7 +58,7 @@ def generate_and_save_summaries():
     with torch.no_grad():
         for i in range(len(dataset)):
             sample = dataset[i]
-            case_id = dataset.cases[i]["id"]
+            case_id = dataset.samples[i]["id"]
             sample_path = os.path.join(DATA_DIR, str(case_id))
             
             # Need to add batch dimension (1, ...)

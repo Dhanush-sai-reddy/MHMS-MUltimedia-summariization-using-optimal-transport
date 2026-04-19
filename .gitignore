@@ -55,3 +55,7 @@ results/
 diagnose_model.py
 
 myenv
+
+manifest.json
+
+embeddings_qwen2vl/

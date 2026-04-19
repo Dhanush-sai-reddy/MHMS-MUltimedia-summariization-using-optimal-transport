@@ -87,13 +87,13 @@ def main():
     CHECKPOINT_DIR = "checkpoints_qwen2vl"
     
     # Model hyperparameters
-    EMBEDDING_DIM = 2560  # Qwen3-VL-4B hidden size (4096 for 8B-Instruct)
+    EMBEDDING_DIM = 1536  # Qwen2-VL-2B hidden size
     VIDEO_HIDDEN_DIM = 512
     TEXT_HIDDEN_DIM = 512
     VIDEO_OMEGA_B = 3
     
     # Training hyperparameters
-    EPOCHS = 5
+    EPOCHS = 30
     BATCH_SIZE = 2
     LEARNING_RATE = 1e-4
     LAMBDA_OT = 0.1  # Weight for OT loss

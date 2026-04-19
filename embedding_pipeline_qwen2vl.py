@@ -21,6 +21,7 @@ Model: Qwen/Qwen2-VL-8B (or Qwen2-VL-2B for lighter memory)
 """
 
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import sys
 import json
 import glob
@@ -130,6 +131,9 @@ def extract_text_embeddings_qwen(sentences: List[str], batch_size: int = 8) -> n
             embeddings = sum_embeddings / sum_mask
             
             all_embeddings.append(embeddings.cpu().to(torch.float32).numpy())
+            
+            del text_inputs, outputs, hidden_states, attention_mask, mask_expanded, sum_embeddings, sum_mask, embeddings
+            torch.cuda.empty_cache()
     
     return np.concatenate(all_embeddings, axis=0).astype(np.float32)
 
@@ -216,6 +220,9 @@ def extract_visual_embeddings_qwen(image_paths: List[str], batch_size: int = 4) 
                 failed_count = len(batch_paths) - len(valid_paths)
                 for _ in range(failed_count):
                     all_embeddings.append(np.zeros((1, EMBEDDING_DIM), dtype=np.float32))
+                
+                del text_inputs, outputs, hidden_states, attention_mask, mask_expanded, sum_embeddings, sum_mask, embeddings, batch_embeddings
+                torch.cuda.empty_cache()
                     
             except Exception as e:
                 print(f"Error processing batch: {e}")
@@ -274,7 +281,7 @@ def main():
                     sentences = [s.strip() for s in f.readlines() if s.strip()]
                 if sentences:
                     print(f"  Processing text case {case_id} ({len(sentences)} sentences)...")
-                    text_emb = extract_text_embeddings_qwen(sentences)
+                    text_emb = extract_text_embeddings_qwen(sentences, batch_size=2)
                     save_path = os.path.join(text_dir, f"case_{case_id}.npy")
                     np.save(save_path, text_emb)
                     entry["text_shape"] = list(text_emb.shape)
@@ -288,7 +295,7 @@ def main():
         if keyframes:
             try:
                 print(f"  Processing visual case {case_id} ({len(keyframes)} keyframes)...")
-                visual_emb = extract_visual_embeddings_qwen(keyframes)
+                visual_emb = extract_visual_embeddings_qwen(keyframes, batch_size=1)
                 save_path = os.path.join(visual_dir, f"case_{case_id}.npy")
                 np.save(save_path, visual_emb)
                 entry["visual_shape"] = list(visual_emb.shape)

@@ -1,5 +1,7 @@
-import cv2
 import os
+os.environ['OPENCV_FFMPEG_LOGLEVEL'] = '-8'
+os.environ['OPENCV_LOG_LEVEL'] = 'SILENT'
+import cv2
 import glob
 import numpy as np
 from sklearn.cluster import KMeans
@@ -26,6 +28,7 @@ def extract_summary_for_segment(video_path, save_dir, save_fname, n_clusters=3):
     max_retries = 20
     retry_count = 0
     total_frames_target = 100 # limit frames to keep memory low and speed up
+    frame_count = 0
     
     while len(frames) < total_frames_target:
         ret, frame = cap.read()
@@ -36,9 +39,10 @@ def extract_summary_for_segment(video_path, save_dir, save_fname, n_clusters=3):
             continue
             
         retry_count = 0 # reset on success
+        frame_count += 1
         
         # Skip some frames to move faster through the segment
-        if len(frames) % 5 != 0:
+        if frame_count % 5 != 0:
             continue
 
         try:
