@@ -1,22 +1,22 @@
 """
-MHMS Embedding Pipeline (Qwen3 VL Unified Vision-Language)
-===========================================================
-Extracts unified multimodal embeddings using Qwen3 VL:
+MHMS Embedding Pipeline (Qwen2-VL Unified Vision-Language)
+=========================================================
+Extracts unified multimodal embeddings using Qwen2-VL:
 - Both text and images encoded into the SAME semantic space
 - Native vision-language understanding for better cross-modal alignment
 - Compatible with the Optimal Transport alignment in MHMS
 
 Output structure:
-  embeddings_qwen3vl/
-    text/       - case_1.npy, case_2.npy, ... (N x 3584) - sentence embeddings
-    visual/     - case_1.npy, case_2.npy, ... (M x 3584) - keyframe embeddings
+  embeddings_qwen2vl/
+    text/       - case_1.npy, case_2.npy, ... (N x 1536) - sentence embeddings
+    visual/     - case_1.npy, case_2.npy, ... (M x 1536) - keyframe embeddings
     manifest.json
 
 Requirements:
   pip install transformers accelerate qwen-vl-utils
 
-Model: Qwen/Qwen3-VL-8B (or Qwen3-VL-2B for lighter memory)
-  - Hidden dimension: 3584 (8B) or 2048 (2B)
+Model: Qwen/Qwen2-VL-2B-Instruct (5GB, smaller and more stable than Qwen3)
+  - Hidden dimension: 1536 (2B model)
   - Supports both text and image inputs natively
 """
 
@@ -29,23 +29,22 @@ import numpy as np
 from PIL import Image
 from typing import List, Union
 
-# Qwen3 VL from HuggingFace
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+# Qwen2 VL from HuggingFace
+from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 
 # ─── 1. INITIALIZE MODEL ──────────────────────────────────────────────
 
-print("Loading Qwen3-VL-4B-Instruct model (~9GB weights, may take a few minutes to load)...")
+print("Loading Qwen2-VL-2B-Instruct model (~5GB weights)...")
 
 # Device Configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Model ID - Qwen3-VL-4B-Instruct (smallest available, ~9GB)
-MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"  # or "Qwen/Qwen3-VL-8B-Instruct" for higher quality
+# Model ID - Qwen2-VL-2B-Instruct (smaller, stable, ~5GB)
+MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct"  # or "Qwen/Qwen2-VL-7B-Instruct" for higher quality
 
 # Load model and processor
-# Note: Use float16 for efficiency on GPU, float32 on CPU (avoid bfloat16 on CPU)
 model_kwargs = {"trust_remote_code": True}
 
 if torch.cuda.is_available():
@@ -57,15 +56,15 @@ else:
     model_kwargs["torch_dtype"] = torch.float32
     model_kwargs["low_cpu_mem_usage"] = True
 
-model = Qwen3VLForConditionalGeneration.from_pretrained(MODEL_ID, **model_kwargs)
+model = Qwen2VLForConditionalGeneration.from_pretrained(MODEL_ID, **model_kwargs)
 processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
 
 # Get embedding dimension from model config
-# Qwen3-VL-4B-Instruct uses 2560 dim (text config) or 2048 (vision config)
+# Qwen2-VL-2B uses 1536 dim
 try:
-    EMBEDDING_DIM = model.config.text_config.hidden_size  # 2560 for 4B
+    EMBEDDING_DIM = model.config.text_config.hidden_size  # 1536 for 2B
 except AttributeError:
-    EMBEDDING_DIM = getattr(model.config, 'hidden_size', 2560)
+    EMBEDDING_DIM = getattr(model.config, 'hidden_size', 1536)
 print(f"Model loaded. Embedding dimension: {EMBEDDING_DIM}")
 
 model.eval()
@@ -229,7 +228,7 @@ def extract_visual_embeddings_qwen(image_paths: List[str], batch_size: int = 4) 
 
 def main():
     data_dir = "cnn_data"
-    out_dir = "embeddings_qwen3vl"
+    out_dir = "embeddings_qwen2vl"
 
     if not os.path.exists(data_dir):
         print(f"Error: '{data_dir}' not found.")
@@ -305,16 +304,16 @@ def main():
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"\n{'=' * 60}")
+    print(f"\n" + "=" * 60)
     print(f"  Extraction Complete!")
     print(f"  Model:              {MODEL_ID}")
     print(f"  Embedding dim:      {EMBEDDING_DIM}")
     print(f"  Text embeddings:    {text_count:>3d} cases")
     print(f"  Visual embeddings:  {visual_count:>3d} cases")
     print(f"  Skipped:            {skipped:>3d} cases")
-    print(f"{'=' * 60}")
+    print(f"=" * 60)
     print(f"\nNext steps:")
-    print(f"  1. Update dataset.py to use embeddings_qwen3vl/")
+    print(f"  1. Update dataset.py to use embeddings_qwen2vl/")
     print(f"  2. Update mhms_framework.py dims: text={EMBEDDING_DIM}, visual={EMBEDDING_DIM}")
     print(f"  3. Retrain model with unified embeddings")
 

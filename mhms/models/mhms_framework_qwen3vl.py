@@ -1,8 +1,8 @@
 """
-MHMS Framework with Qwen3 VL Unified Embeddings
-================================================
-Modified MHMS framework optimized for Qwen3 VL embeddings where:
-- Text and visual features share the SAME embedding dimension
+MHMS Framework with Qwen2 VL Unified Embeddings
+===============================================
+Modified MHMS framework optimized for Qwen2 VL embeddings where:
+- Text and visual features share the SAME embedding dimension (1536)
 - Cross-modal alignment via Optimal Transport is more effective
 - Unified semantic space enables better multimodal understanding
 """
@@ -15,10 +15,10 @@ from mhms.models.text_segmentation import HierarchicalBERT
 from mhms.models.summarization import TextExtractiveSummarizer, VisualEncoderDecoderSummarizer
 
 
-class MHMS_Qwen3VL(nn.Module):
+class MHMS_Qwen2VL(nn.Module):
     """
-    Multimodal Hierarchical Multimedia Summarization with Qwen3 VL embeddings.
-    
+    Multimodal Hierarchical Multimedia Summarization with Qwen2 VL embeddings.
+
     Key improvements:
     - Unified embedding space (both modalities: same dimension)
     - More effective Optimal Transport alignment
@@ -26,22 +26,22 @@ class MHMS_Qwen3VL(nn.Module):
     """
     
     def __init__(self,
-                 embedding_dim=2560,  # Qwen3-VL-4B hidden size (4096 for 8B-Instruct)
+                 embedding_dim=1536,  # Qwen2-VL-2B hidden size
                  video_hidden_dim=512,
                  text_hidden_dim=512,
                  video_omega_b=3,
                  use_text_segmentation=False):
-        super(MHMS_Qwen3VL, self).__init__()
+        super(MHMS_Qwen2VL, self).__init__()
         
         self.embedding_dim = embedding_dim
-        
+
         # 1. Text Segmentation (HierarchicalBERT) - Optional, disabled by default for speed
         self.use_text_segmentation = use_text_segmentation
         if use_text_segmentation:
             self.text_segmenter = HierarchicalBERT(
                 pretrained_model_name='bert-base-uncased',
                 num_article_layers=12,
-                hidden_size=embedding_dim,  # Match Qwen dim
+                hidden_size=768,  # BERT is 768, we'll project to Qwen dim
                 num_heads=12
             )
         

@@ -1,8 +1,8 @@
 """
-MHMS Dataset Loader for Qwen3 VL Unified Embeddings
-====================================================
-Loads pre-extracted Qwen3 VL embeddings for both text and video.
-Both modalities are in the SAME embedding space (e.g., 3584-dim).
+MHMS Dataset Loader for Qwen2 VL Unified Embeddings
+==================================================
+Loads pre-extracted Qwen2 VL embeddings for both text and video.
+Both modalities are in the SAME embedding space (1536-dim).
 
 Key differences from original dataset.py:
 - Unified embedding dimension for both text and visual
@@ -18,9 +18,9 @@ from torch.utils.data import Dataset
 import re
 
 
-class CNNMultimodalDatasetQwen3VL(Dataset):
-    def __init__(self, data_dir="cnn_data", embeddings_dir="embeddings_qwen3vl", 
-                 max_sentences=20, max_shots=20, embedding_dim=3584):
+class CNNMultimodalDatasetQwen2VL(Dataset):
+    def __init__(self, data_dir="cnn_data", embeddings_dir="embeddings_qwen2vl",
+                 max_sentences=20, max_shots=20, embedding_dim=1536):
         """
         Loads pre-extracted Qwen3 VL embeddings.
         
@@ -49,13 +49,13 @@ class CNNMultimodalDatasetQwen3VL(Dataset):
                         self.labels.append(nums)
         
         self.samples = []
-        
+
         text_dir = os.path.join(embeddings_dir, "text")
         visual_dir = os.path.join(embeddings_dir, "visual")
-        
+
         if not os.path.exists(text_dir) or not os.path.exists(visual_dir):
             raise ValueError(
-                f"Qwen3 VL embeddings not found at '{embeddings_dir}'.\n"
+                f"Qwen2 VL embeddings not found at '{embeddings_dir}'.\n"
                 f"Please run: python embedding_pipeline_qwen3vl.py"
             )
 
@@ -87,7 +87,7 @@ class CNNMultimodalDatasetQwen3VL(Dataset):
                         })
                         
         self.samples.sort(key=lambda x: x["id"])
-        print(f"Qwen3VL Dataset initialized with {len(self.samples)} valid multimodal cases.")
+        print(f"Qwen2VL Dataset initialized with {len(self.samples)} valid multimodal cases.")
         print(f"  Embedding dimension: {self.embedding_dim}")
 
     def __len__(self):

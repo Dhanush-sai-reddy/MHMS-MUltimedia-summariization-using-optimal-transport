@@ -6,136 +6,73 @@ from mhms.models.text_segmentation import HierarchicalBERT
 from mhms.models.summarization import TextExtractiveSummarizer, VisualEncoderDecoderSummarizer
 
 class MHMS(nn.Module):
-    """
-    The Multimodal Hierarchical Multimedia Summarization (MHMS) framework.
-    Combines Textual Segmentation, Video Segmentation, and Extractive Summarization
-    under a unified model aligned via Optimal Transport.
-    """
-    def __init__(self, 
-                 text_feature_dim=768, 
-                 visual_feature_dim=2048, 
-                 video_hidden_dim=256,
-                 video_omega_b=3):
+    def __init__(self, text_feature_dim=768, visual_feature_dim=2048, video_hidden_dim=256, video_omega_b=3):
         super(MHMS, self).__init__()
-        
-        # 1. Text Segmentation (HierarchicalBERT) - Per paper Section 3.3
         self.text_segmenter = HierarchicalBERT(
             pretrained_model_name='bert-base-uncased',
-            num_article_layers=12,
-            hidden_size=768,
-            num_heads=12
+            num_article_layers=12, hidden_size=768, num_heads=12
         )
-        
-        # 2. Video Segmentation (VTS) - Per paper Section 3.1
         self.video_segmenter = VTS(
             visual_feature_dim=visual_feature_dim,
-            hidden_dim=video_hidden_dim,
-            omega_b=video_omega_b
+            hidden_dim=video_hidden_dim, omega_b=video_omega_b
         )
-        
-        # 3. Projectors to a common semantic alignment dimension (Optimal Transport space)
         self.alignment_dim = 256
         self.text_projector = nn.Linear(text_feature_dim, self.alignment_dim)
         self.video_projector = nn.Linear(visual_feature_dim, self.alignment_dim)
-        
-        # 4. Summarization Modules - Per paper Sections 3.2 & 3.4
         self.text_summarizer = TextExtractiveSummarizer(input_dim=text_feature_dim, hidden_dim=text_feature_dim//2)
         self.video_summarizer = VisualEncoderDecoderSummarizer(input_dim=visual_feature_dim, hidden_dim=video_hidden_dim)
 
-    def compute_sinkhorn_loss_torch(self, E, V, reg=0.05, num_iters=10):
-        """
-        PyTorch differentiable Sinkhorn Optimal Transport.
-        Args:
-            E: Text embeddings shape (Batch, Seq_Text, Dim)
-            V: Video embeddings shape (Batch, Seq_Video, Dim)
-            reg: Regularization parameter
-            num_iters: number of sinkhorn loops
-        Returns:
-            ot_loss: Scalar total transport cost
-        """
+    def compute_sinkhorn_loss_torch(self, E, V, reg=0.05, num_iters=50, text_mask=None, video_mask=None):
         B, K, D = E.shape
         _, M, _ = V.shape
-        
-        # Normalize embeddings to compute Cosine Distance, avoiding zero-division
+
         E_norm = F.normalize(E, p=2, dim=-1, eps=1e-8)
         V_norm = F.normalize(V, p=2, dim=-1, eps=1e-8)
-        
-        # Cosine similarity matrix (B, K, M)
         sim = torch.bmm(E_norm, V_norm.transpose(1, 2))
-        
-        # Cosine distance cost matrix (B, K, M)
         C = 1.0 - sim
-        
-        # Uniform marginal distributions (B, K) and (B, M)
-        mu = torch.ones(B, K, device=E.device) / K
-        nu = torch.ones(B, M, device=E.device) / M
-        
-        # Gibbs kernel (B, K, M)
+
+        if text_mask is not None and video_mask is not None:
+            valid_mask = text_mask.unsqueeze(2).float() * video_mask.unsqueeze(1).float()
+            C = C * valid_mask + (1.0 - valid_mask) * 1e6
+            text_counts = text_mask.sum(dim=-1, keepdim=True).float().clamp(min=1)
+            video_counts = video_mask.sum(dim=-1, keepdim=True).float().clamp(min=1)
+            mu = text_mask.float() / text_counts
+            nu = video_mask.float() / video_counts
+        else:
+            mu = torch.ones(B, K, device=E.device) / K
+            nu = torch.ones(B, M, device=E.device) / M
+
         K_matrix = torch.exp(-C / reg)
-        
-        # Initialize scaling vectors u (B, K) and v (B, M)
         u = torch.ones(B, K, device=E.device) / K
         v = torch.ones(B, M, device=E.device) / M
-        
-        # Sinkhorn Iterations
+
         for _ in range(num_iters):
             u = mu / (torch.bmm(K_matrix, v.unsqueeze(2)).squeeze(2) + 1e-8)
             v = nu / (torch.bmm(K_matrix.transpose(1, 2), u.unsqueeze(2)).squeeze(2) + 1e-8)
-            
-        # Optimal Transport matrix T: diag(u) K_matrix diag(v)
-        # Using broadcasting instead of explicit diags
+
         T = u.unsqueeze(2) * K_matrix * v.unsqueeze(1)
-        
-        # Compute cost
-        distance = torch.sum(T * C) / B # Average over batch
-        
+        distance = torch.sum(T * C) / B
         return distance, T
 
-    def forward(self, text_features, video_features, text_input_ids=None, text_attention_mask=None):
-        """
-        Forward pass through the MHMS framework.
-        
-        Args:
-            text_features: (B, Num_Sentences, 768) - Pre-computed BERT embeddings
-            video_features: (B, Num_Shots, 2048) - Pre-computed ResNet embeddings
-            text_input_ids: (B, Num_Sentences, Max_Words) - Tokenized text for HierarchicalBERT
-            text_attention_mask: (B, Num_Sentences, Max_Words) - Attention mask for tokens
-            
-        Returns:
-            dict containing all probabilities and losses
-        """
-        
+    def forward(self, text_features, video_features, text_input_ids=None, text_attention_mask=None, text_mask=None, video_mask=None):
         B, S, _ = text_features.shape
-        
-        # 1. Text Segmentation (HierarchicalBERT) - Per paper Section 3.3
-        # Compute boundary probabilities for each sentence
+
         if text_input_ids is not None and text_attention_mask is not None:
             text_seg_probs, _ = self.text_segmenter(text_input_ids, text_attention_mask)
         else:
-            # Fallback if tokenized text not provided (legacy behavior)
             text_seg_probs = torch.zeros(B, S, device=text_features.device)
-        
-        # 2. Video Segmentation (VTS) - Per paper Section 3.1
+
         video_seg_probs = self.video_segmenter(video_features)
-        
-        # 3. Summarization - Per paper Sections 3.2 & 3.4
-        # Text extractive summarization (supervised)
         text_summ_probs = self.text_summarizer(text_features)
-        # Visual encoder-decoder summarization (unsupervised, trained via OT loss)
         video_summ_probs = self.video_summarizer(video_features)
-        
-        # 4. Cross-Domain Alignment via Optimal Transport - Per paper Section 3.5
-        # Weight features by summarization probabilities for OT computation
+
         E_weighted = text_features * text_summ_probs.unsqueeze(-1)
         V_weighted = video_features * video_summ_probs.unsqueeze(-1)
-        
-        # Project to common alignment space (Eq 10-12)
         E_proj = self.text_projector(E_weighted)
         V_proj = self.video_projector(V_weighted)
-        
-        # Compute Sinkhorn OT loss
-        ot_loss, T_matrix = self.compute_sinkhorn_loss_torch(E_proj, V_proj)
-        
+
+        ot_loss, T_matrix = self.compute_sinkhorn_loss_torch(E_proj, V_proj, text_mask=text_mask, video_mask=video_mask)
+
         return {
             "text_seg_probs": text_seg_probs,
             "text_features": text_features,
@@ -146,92 +83,58 @@ class MHMS(nn.Module):
             "ot_alignment_matrix": T_matrix
         }
 
-    def generate_multimodal_summary(self, text_features, video_features, threshold=0.5):
-        """
-        Follows the exact inference mechanism described in the MHMS paper Section 3.5.
-        Generates the visual and textual candidates, then uses Optimal Transport 
-        to compute the alignment Matrix T to select the best matching multimedia pairs.
-        """
+    def generate_multimodal_summary(self, text_features, video_features, threshold=0.5, text_mask=None, video_mask=None):
         self.eval()
         with torch.no_grad():
-            outputs = self.forward(text_features, video_features)
-            
-            text_probs = outputs["text_summ_probs"]   # (B, Num_Sentences)
-            video_probs = outputs["video_summ_probs"] # (B, Num_Shots)
-            T_matrix = outputs["ot_alignment_matrix"] # (B, Num_Sentences, Num_Shots)
-            
-            # The matrix T denotes the Wasserstein transportation cost matching.
-            # Best matches are pairs with the highest mass transport values in T.
+            outputs = self.forward(text_features, video_features, text_mask=text_mask, video_mask=video_mask)
+            text_probs = outputs["text_summ_probs"]
+            video_probs = outputs["video_summ_probs"]
+            T_matrix = outputs["ot_alignment_matrix"]
+
             matched_summaries = []
-            B = T_matrix.shape[0]
-            
-            for b in range(B):
-                # 1. Select Candidates via Summarizer probabilities
+            for b in range(T_matrix.shape[0]):
                 text_candidates = torch.where(text_probs[b] > threshold)[0]
                 video_candidates = torch.where(video_probs[b] > threshold)[0]
-                
-                # 2. Align candidates using the Transport Plan matrix T
                 alignments = []
                 for t_idx in text_candidates:
                     for v_idx in video_candidates:
-                        # Higher value in T means stronger alignment 
-                        match_score = T_matrix[b, t_idx, v_idx].item()
                         alignments.append({
                             "text_idx": t_idx.item(),
                             "video_idx": v_idx.item(),
-                            "match_score": match_score
+                            "match_score": T_matrix[b, t_idx, v_idx].item()
                         })
-                        
-                # Sort alignments to fetch the highest correlated multimodal summary pairs
                 alignments.sort(key=lambda x: x["match_score"], reverse=True)
                 matched_summaries.append(alignments)
-                
             return matched_summaries
 
-    def generate_multimodal_summary_topk(self, text_features, video_features, top_k=3):
-        """
-        Adaptive Top-K inference: selects the top-K highest-scoring candidates
-        from each modality by their summarizer probabilities, then uses the 
-        Optimal Transport plan T to align them into multimodal pairs.
-        
-        This avoids the problem of absolute thresholding when model probabilities
-        are low (e.g., under-trained video branch).
-        """
+    def generate_multimodal_summary_topk(self, text_features, video_features, top_k=3, text_mask=None, video_mask=None):
         self.eval()
         with torch.no_grad():
-            outputs = self.forward(text_features, video_features)
-            
-            text_probs = outputs["text_summ_probs"]   # (B, Num_Sentences)
-            video_probs = outputs["video_summ_probs"] # (B, Num_Shots)
-            T_matrix = outputs["ot_alignment_matrix"] # (B, Num_Sentences, Num_Shots)
-            
+            outputs = self.forward(text_features, video_features, text_mask=text_mask, video_mask=video_mask)
+            text_probs = outputs["text_summ_probs"]
+            video_probs = outputs["video_summ_probs"]
+            T_matrix = outputs["ot_alignment_matrix"]
+
             matched_summaries = []
-            B = T_matrix.shape[0]
-            
-            for b in range(B):
-                # Select Top-K text candidates (by summarizer probability)
-                k_text = min(top_k, text_probs.shape[1])
-                text_topk_indices = torch.topk(text_probs[b], k_text).indices
-                
-                # Select Top-K video candidates (by summarizer probability)
-                k_video = min(top_k, video_probs.shape[1])
-                video_topk_indices = torch.topk(video_probs[b], k_video).indices
-                
-                # Pair candidates using the OT transport plan
+            for b in range(T_matrix.shape[0]):
+                n_valid_text = int(text_mask[b].sum().item()) if text_mask is not None else text_probs.shape[1]
+                n_valid_video = int(video_mask[b].sum().item()) if video_mask is not None else video_probs.shape[1]
+
+                k_text = min(top_k, n_valid_text)
+                k_video = min(top_k, n_valid_video)
+                text_topk = torch.topk(text_probs[b, :n_valid_text], k_text).indices
+                video_topk = torch.topk(video_probs[b, :n_valid_video], k_video).indices
+
                 alignments = []
-                for t_idx in text_topk_indices:
-                    for v_idx in video_topk_indices:
-                        match_score = T_matrix[b, t_idx, v_idx].item()
+                for t_idx in text_topk:
+                    for v_idx in video_topk:
                         alignments.append({
                             "text_idx": t_idx.item(),
                             "video_idx": v_idx.item(),
-                            "match_score": match_score,
+                            "match_score": T_matrix[b, t_idx, v_idx].item(),
                             "text_prob": text_probs[b, t_idx].item(),
                             "video_prob": video_probs[b, v_idx].item()
                         })
-                
-                # Sort by OT alignment strength
                 alignments.sort(key=lambda x: x["match_score"], reverse=True)
                 matched_summaries.append(alignments)
-                
             return matched_summaries

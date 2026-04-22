@@ -1,11 +1,11 @@
 """
-Training Script for MHMS with Qwen3 VL Unified Embeddings
-==========================================================
-Trains the MHMS framework using Qwen3 VL embeddings.
+Training Script for MHMS with Qwen2 VL Unified Embeddings
+========================================================
+Trains the MHMS framework using Qwen2 VL embeddings.
 
 Key differences from original train.py:
-- Uses CNNMultimodalDatasetQwen3VL (unified embeddings)
-- Uses MHMS_Qwen3VL framework (optimized for unified dim)
+- Uses CNNMultimodalDatasetQwen2VL (unified embeddings)
+- Uses MHMS_Qwen2VL framework (optimized for unified dim)
 - Better cross-modal alignment due to shared embedding space
 """
 
@@ -16,8 +16,8 @@ from torch.optim import AdamW
 import os
 import json
 
-from mhms.dataset_qwen3vl import CNNMultimodalDatasetQwen3VL
-from mhms.models.mhms_framework_qwen3vl import MHMS_Qwen3VL
+from mhms.dataset_qwen3vl import CNNMultimodalDatasetQwen2VL
+from mhms.models.mhms_framework_qwen3vl import MHMS_Qwen2VL
 
 
 def train_epoch(model, dataloader, optimizer, device, lambda_ot=0.1):
@@ -83,11 +83,11 @@ def train_epoch(model, dataloader, optimizer, device, lambda_ot=0.1):
 def main():
     # Configuration
     DATA_DIR = "cnn_data"
-    EMBEDDINGS_DIR = "embeddings_qwen3vl"
-    CHECKPOINT_DIR = "checkpoints_qwen3vl"
-    
+    EMBEDDINGS_DIR = "embeddings_qwen2vl"
+    CHECKPOINT_DIR = "checkpoints_qwen2vl"
+
     # Model hyperparameters
-    EMBEDDING_DIM = 2560  # Qwen3-VL-4B hidden size (4096 for 8B-Instruct)
+    EMBEDDING_DIM = 1536  # Qwen2-VL-2B hidden size
     VIDEO_HIDDEN_DIM = 512
     TEXT_HIDDEN_DIM = 512
     VIDEO_OMEGA_B = 3
@@ -121,9 +121,9 @@ def main():
         json.dump(config, f, indent=2)
     
     # Initialize dataset
-    print("\nInitializing Qwen3 VL dataset...")
+    print("\nInitializing Qwen2 VL dataset...")
     try:
-        dataset = CNNMultimodalDatasetQwen3VL(
+        dataset = CNNMultimodalDatasetQwen2VL(
             data_dir=DATA_DIR,
             embeddings_dir=EMBEDDINGS_DIR,
             max_sentences=20,
@@ -144,8 +144,8 @@ def main():
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     
     # Initialize model
-    print("\nInitializing MHMS model with Qwen3 VL embeddings...")
-    model = MHMS_Qwen3VL(
+    print("\nInitializing MHMS model with Qwen2 VL embeddings...")
+    model = MHMS_Qwen2VL(
         embedding_dim=EMBEDDING_DIM,
         video_hidden_dim=VIDEO_HIDDEN_DIM,
         text_hidden_dim=TEXT_HIDDEN_DIM,
@@ -163,7 +163,7 @@ def main():
     
     # Training loop
     print("\n" + "=" * 60)
-    print("  Starting Training (Qwen3 VL Unified Embeddings)")
+    print("  Starting Training (Qwen2 VL Unified Embeddings)")
     print("=" * 60)
     
     for epoch in range(1, EPOCHS + 1):
