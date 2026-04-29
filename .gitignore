@@ -59,3 +59,4 @@ myenv
 manifest.json
 
 embeddings_qwen2vl/
+embeddings_clip/

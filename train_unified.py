@@ -7,6 +7,7 @@ from mhms.models.mhms_framework_unified import MHMS_Unified
 MODEL_CONFIGS = {
     "qwen2vl": {"embedding_dim": 1536, "embeddings_dir": "embeddings_qwen2vl"},
     "qwen3vl": {"embedding_dim": 2560, "embeddings_dir": "embeddings_qwen3vl"},
+    "clip":    {"embedding_dim": 512,  "embeddings_dir": "embeddings_clip"},
 }
 
 def train(args):

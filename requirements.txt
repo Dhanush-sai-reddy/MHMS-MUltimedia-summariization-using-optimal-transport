@@ -9,3 +9,7 @@ qwen-vl-utils
 accelerate>=0.26.0
 pillow
 python-dotenv
+git+https://github.com/openai/CLIP.git
+ftfy
+regex
+
