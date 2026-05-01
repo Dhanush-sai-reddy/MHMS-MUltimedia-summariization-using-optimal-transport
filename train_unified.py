@@ -8,6 +8,7 @@ MODEL_CONFIGS = {
     "qwen2vl": {"embedding_dim": 1536, "embeddings_dir": "embeddings_qwen2vl"},
     "qwen3vl": {"embedding_dim": 2560, "embeddings_dir": "embeddings_qwen3vl"},
     "clip":    {"embedding_dim": 512,  "embeddings_dir": "embeddings_clip"},
+    "vit":     {"embedding_dim": 768,  "embeddings_dir": "embeddings_vit"},
 }
 
 def train(args):
@@ -23,10 +24,14 @@ def train(args):
     model = MHMS_Unified(embedding_dim=cfg["embedding_dim"], video_hidden_dim=512, text_hidden_dim=512, video_omega_b=3)
     model.to(device)
 
+    if args.resume_from and os.path.exists(args.resume_from):
+        model.load_state_dict(torch.load(args.resume_from, map_location=device))
+        print(f"Resumed training from {args.resume_from}")
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(args.start_epoch, args.start_epoch + args.epochs):
         model.train()
         total_loss = 0
         for batch_idx, batch in enumerate(dataloader):
@@ -60,6 +65,8 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--model", choices=list(MODEL_CONFIGS.keys()), default="qwen2vl")
     p.add_argument("--epochs", type=int, default=5)
+    p.add_argument("--start-epoch", type=int, default=1)
+    p.add_argument("--resume-from", type=str, default="")
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--lambda-ot", type=float, default=0.1)
