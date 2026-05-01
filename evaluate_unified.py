@@ -68,7 +68,7 @@ def evaluate_rouge(results_map, data_dir="cnn_data"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["clip", "qwen2vl", "qwen3vl"], default="clip")
+    parser.add_argument("--model", choices=["clip", "qwen2vl", "qwen3vl", "vit"], default="clip")
     parser.add_argument("--weights", type=str, default="mhms_clip_final.pth")
     parser.add_argument("--dim", type=int, default=512)
     parser.add_argument("--dir", type=str, default="embeddings_clip")
